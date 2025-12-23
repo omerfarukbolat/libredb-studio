@@ -1,0 +1,80 @@
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+bun-debug.log*
+.pnpm-debug.log*
+
+# Build outputs
+.next
+out
+build
+dist
+.turbo
+.swc
+*.tsbuildinfo
+
+# Environment files
+.env
+.env*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Git
+.git
+.gitignore
+.github
+
+# Docker
+.dockerignore
+docker-compose.yml
+
+# Documentation (not needed in production image)
+docs
+*.md
+!README.md
+!LICENSE
+
+# Development files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Testing
+coverage
+*.lcov
+**/__tests__/**
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+
+# CI/CD
+.github
+
+# OS
+.DS_Store
+Thumbs.db
+.AppleDouble
+.LSOverride
+
+# Temporary files
+*.tmp
+*.temp
+.cache
+.bun
+
+# TypeScript
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# Other
+CLAUDE.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md
+render.yaml

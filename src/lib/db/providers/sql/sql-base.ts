@@ -1,0 +1,133 @@
+/**
+ * SQL Base Provider
+ * Abstract class with shared logic for all SQL-based databases
+ */
+
+import { BaseDatabaseProvider } from '../../base-provider';
+import {
+  type DatabaseConnection,
+  type ProviderOptions,
+} from '../../types';
+
+// ============================================================================
+// SQL Base Provider
+// ============================================================================
+
+export abstract class SQLBaseProvider extends BaseDatabaseProvider {
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+    super(config, options);
+  }
+
+  // ============================================================================
+  // SQL-Specific Utilities
+  // ============================================================================
+
+  /**
+   * Escape identifier based on SQL dialect
+   * PostgreSQL/SQLite: "identifier"
+   * MySQL: `identifier`
+   */
+  protected escapeIdentifier(identifier: string): string {
+    const quoteChar = this.type === 'mysql' ? '`' : '"';
+    const escaped = identifier.replace(
+      new RegExp(quoteChar, 'g'),
+      quoteChar + quoteChar
+    );
+    return `${quoteChar}${escaped}${quoteChar}`;
+  }
+
+  /**
+   * Escape string value for SQL
+   */
+  protected escapeString(value: string): string {
+    return value.replace(/'/g, "''");
+  }
+
+  /**
+   * Build LIMIT clause based on dialect
+   */
+  protected buildLimitClause(limit: number, offset?: number): string {
+    if (offset !== undefined && offset > 0) {
+      return `LIMIT ${limit} OFFSET ${offset}`;
+    }
+    return `LIMIT ${limit}`;
+  }
+
+  /**
+   * Get placeholder style for parameterized queries
+   * PostgreSQL: $1, $2, $3
+   * MySQL/SQLite: ?, ?, ?
+   */
+  protected getPlaceholder(index: number): string {
+    return this.type === 'postgres' ? `$${index}` : '?';
+  }
+
+  /**
+   * Determine if SSL should be enabled based on host
+   */
+  protected shouldEnableSSL(): boolean {
+    const host = this.config.host?.toLowerCase() || '';
+    const cloudProviders = [
+      'supabase',
+      'render',
+      'neon',
+      'planetscale',
+      'aws',
+      'azure',
+      'gcp',
+      'cloud',
+    ];
+    return (
+      this.options.ssl === true ||
+      cloudProviders.some((provider) => host.includes(provider))
+    );
+  }
+
+  /**
+   * Get information schema name based on dialect
+   */
+  protected getInformationSchemaName(): string {
+    return 'information_schema';
+  }
+
+  /**
+   * Get default schema/database name for queries
+   */
+  protected getDefaultSchema(): string {
+    switch (this.type) {
+      case 'postgres':
+        return 'public';
+      case 'mysql':
+        return this.config.database || '';
+      default:
+        return '';
+    }
+  }
+
+  /**
+   * Check if query is read-only (SELECT, SHOW, DESCRIBE, EXPLAIN)
+   */
+  protected isReadOnlyQuery(sql: string): boolean {
+    const trimmed = sql.trim().toLowerCase();
+    return (
+      trimmed.startsWith('select') ||
+      trimmed.startsWith('show') ||
+      trimmed.startsWith('describe') ||
+      trimmed.startsWith('explain') ||
+      trimmed.startsWith('pragma')
+    );
+  }
+
+  /**
+   * Check if query modifies schema (CREATE, DROP, ALTER, TRUNCATE)
+   */
+  protected isSchemaModifyingQuery(sql: string): boolean {
+    const trimmed = sql.trim().toLowerCase();
+    return (
+      trimmed.startsWith('create') ||
+      trimmed.startsWith('drop') ||
+      trimmed.startsWith('alter') ||
+      trimmed.startsWith('truncate')
+    );
+  }
+}

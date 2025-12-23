@@ -1,0 +1,658 @@
+"use client";
+
+import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from 'react';
+import Editor, { useMonaco } from '@monaco-editor/react';
+import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { motion, AnimatePresence } from 'framer-motion';
+import { format } from 'sql-formatter';
+
+export interface QueryEditorRef {
+  getSelectedText: () => string;
+  getEffectiveQuery: () => string;
+  getValue: () => string;
+  focus: () => void;
+  format: () => void;
+}
+
+interface QueryEditorProps {
+  value: string;
+  onChange: (val: string) => void;
+  onExplain?: () => void;
+  language?: 'sql' | 'json';
+  tables?: string[];
+  databaseType?: string;
+  schemaContext?: string;
+}
+
+const SQL_KEYWORDS = [
+  'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL',
+  'GROUP BY', 'HAVING', 'ORDER BY', 'LIMIT', 'OFFSET', 'UNION', 'ALL', 'EXISTS', 'DISTINCT',
+  'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'FULL JOIN', 'CROSS JOIN', 'NATURAL JOIN', 'ON', 'USING',
+  'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'TRUNCATE', 'CREATE', 'ALTER', 'DROP',
+  'TABLE', 'VIEW', 'INDEX', 'SCHEMA', 'DATABASE', 'FUNCTION', 'TRIGGER', 'PROCEDURE',
+  'AS', 'WITH', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'CAST', 'COALESCE', 'NULLIF',
+  'WINDOW', 'OVER', 'PARTITION BY', 'ROWS', 'RANGE', 'PRECEDING', 'FOLLOWING', 'UNBOUNDED'
+];
+
+const SQL_FUNCTIONS = [
+  'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'FIRST_VALUE', 'LAST_VALUE', 'LEAD', 'LAG',
+  'ROW_NUMBER', 'RANK', 'DENSE_RANK', 'NTILE', 'CONCAT', 'SUBSTR', 'LENGTH', 'LOWER', 'UPPER',
+  'TRIM', 'LTRIM', 'RTRIM', 'REPLACE', 'ROUND', 'TRUNC', 'ABS', 'NOW', 'CURRENT_TIMESTAMP',
+  'DATE_PART', 'DATE_TRUNC', 'EXTRACT', 'AGE', 'TO_CHAR', 'TO_DATE', 'TO_NUMBER', 'JSON_AGG', 'JSON_BUILD_OBJECT'
+];
+
+const SQL_SNIPPETS = [
+  { label: 'SELECT', value: 'SELECT * FROM ${1:table_name} LIMIT 10;' },
+  { label: 'INSERT', value: 'INSERT INTO ${1:table_name} (${2:columns})\nVALUES (${3:values});' },
+  { label: 'UPDATE', value: 'UPDATE ${1:table_name}\nSET ${2:column} = ${3:value}\nWHERE ${4:condition};' },
+  { label: 'DELETE', value: 'DELETE FROM ${1:table_name}\nWHERE ${2:condition};' },
+  { label: 'JOIN', value: 'SELECT ${1:*}\nFROM ${2:table1} t1\nJOIN ${3:table2} t2 ON t1.${4:id} = t2.${5:t1_id};' },
+  { label: 'WITH', value: 'WITH ${1:cte_name} AS (\n  SELECT ${2:*}\n  FROM ${3:table_name}\n)\nSELECT * FROM ${1:cte_name};' },
+];
+
+export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({ 
+  value, 
+  onChange, 
+  onExplain, 
+  language = 'sql', 
+  tables = [], 
+  databaseType, 
+  schemaContext 
+}, ref) => {
+  const monaco = useMonaco();
+  const editorRef = useRef<any>(null);
+  const [hasSelection, setHasSelection] = useState(false);
+  
+  // AI States
+  const [showAi, setShowAi] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const parsedSchema = useMemo(() => {
+    if (!schemaContext) return [];
+    try {
+      return JSON.parse(schemaContext);
+    } catch (e) {
+      console.error('Failed to parse schema context for editor:', e);
+      return [];
+    }
+  }, [schemaContext]);
+
+    const handleFormat = () => {
+      if (language !== 'sql' || !value) return;
+      try {
+        const formatted = format(value, {
+          language: 'postgresql',
+          keywordCase: 'upper',
+          dataTypeCase: 'upper',
+          indentStyle: 'tabularLeft', 
+          logicalOperatorNewline: 'before',
+          expressionWidth: 100,
+          tabWidth: 2,
+          linesBetweenQueries: 2,
+          dense: false,
+        });
+        onChange(formatted);
+      } catch (e) {
+        console.error('Formatting failed:', e);
+      }
+    };
+
+  const getSelectedText = () => {
+    if (!editorRef.current) return '';
+    const selection = editorRef.current.getSelection();
+    return editorRef.current.getModel().getValueInRange(selection);
+  };
+
+  const getEffectiveQuery = () => {
+    if (!editorRef.current) return { query: value, range: null };
+    
+    const model = editorRef.current.getModel();
+
+    // 1. Check for explicit selection
+    const selection = editorRef.current.getSelection();
+    const selectedText = model.getValueInRange(selection);
+    
+    if (selectedText && selectedText.trim().length > 0) {
+      return { query: selectedText, range: selection };
+    }
+
+    // 2. If no selection, try to find the current statement (between semicolons)
+    if (language === 'sql') {
+      const position = editorRef.current.getPosition();
+      const fullText = model.getValue();
+      const cursorOffset = model.getOffsetAt(position);
+
+      // Find boundaries of the current statement
+      let startOffset = fullText.lastIndexOf(';', cursorOffset - 1);
+      let endOffset = fullText.indexOf(';', cursorOffset);
+
+      if (startOffset === -1) startOffset = 0;
+      else startOffset += 1; // skip the semicolon
+
+      if (endOffset === -1) endOffset = fullText.length;
+
+      const statement = fullText.substring(startOffset, endOffset).trim();
+      if (statement.length > 0) {
+        const startPos = model.getPositionAt(startOffset);
+        const endPos = model.getPositionAt(endOffset);
+        const range = new monaco!.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
+        return { query: statement, range };
+      }
+    }
+
+    return { query: value, range: null };
+  };
+
+  const flashHighlight = (range: any) => {
+    if (!editorRef.current || !monaco || !range) return;
+    
+    const decorations = editorRef.current.deltaDecorations([], [
+      {
+        range: range,
+        options: {
+          isWholeLine: false,
+          className: 'executed-query-highlight',
+          inlineClassName: 'executed-query-inline-highlight'
+        }
+      }
+    ]);
+
+    setTimeout(() => {
+      editorRef.current.deltaDecorations(decorations, []);
+    }, 1000);
+  };
+
+  useImperativeHandle(ref, () => ({
+    getSelectedText,
+    getEffectiveQuery: () => getEffectiveQuery().query,
+    getValue: () => editorRef.current?.getValue() || '',
+    focus: () => editorRef.current?.focus(),
+    format: handleFormat
+  }));
+
+  const handleCopy = () => {
+    const textToCopy = getSelectedText() || value;
+    navigator.clipboard.writeText(textToCopy);
+  };
+
+  const handleClear = () => {
+    onChange('');
+  };
+  
+  const handleAiSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!aiPrompt.trim() || isAiLoading) return;
+
+    setIsAiLoading(true);
+    setAiError(null);
+    try {
+      let filteredSchemaContext = '';
+      if (schemaContext) {
+        try {
+          const topTables = [...parsedSchema]
+            .sort((a, b) => (b.rowCount || 0) - (a.rowCount || 0))
+            .slice(0, 100);
+          
+          filteredSchemaContext = topTables.map(table => {
+            const cols = table.columns.slice(0, 10).map((c: any) => `${c.name} (${c.type}${c.isPrimary ? ', PK' : ''})`).join(', ');
+            return `Table: ${table.name} (${table.rowCount || 0} rows)\nColumns: ${cols}${table.columns.length > 10 ? '...' : ''}`;
+          }).join('\n\n');
+        } catch (err) {
+          filteredSchemaContext = schemaContext.substring(0, 2000);
+        }
+      }
+
+      const response = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          prompt: aiPrompt, 
+          databaseType, 
+          schemaContext: filteredSchemaContext 
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'AI request failed');
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No reader available');
+
+      const currentVal = editorRef.current?.getValue() || '';
+      const shouldReplace = !currentVal || currentVal.startsWith('--');
+      
+      let fullAiResponse = '';
+      if (!shouldReplace) {
+        fullAiResponse = currentVal + '\n\n';
+      }
+      
+      while (true) {
+        const { done, value: chunkValue } = await reader.read();
+        if (done) break;
+        const chunk = new TextDecoder().decode(chunkValue);
+        fullAiResponse += chunk;
+        onChange(fullAiResponse);
+      }
+      
+      setAiPrompt('');
+      setShowAi(false);
+    } catch (error: any) {
+      console.error('AI Error:', error);
+      setAiError(error.message || 'An unexpected error occurred while communicating with the AI.');
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const handleBeforeMount = (monaco: any) => {
+    monaco.editor.defineTheme('db-dark', {
+      base: 'vs-dark',
+      inherit: true,
+      rules: [
+        { token: 'keyword', foreground: '569cd6', fontStyle: 'bold' },
+        { token: 'function', foreground: 'dcdcaa' },
+        { token: 'string', foreground: 'ce9178' },
+        { token: 'number', foreground: 'b5cea8' },
+        { token: 'comment', foreground: '6a9955' },
+        { token: 'operator', foreground: 'd4d4d4' },
+        { token: 'identifier', foreground: '9cdcfe' },
+      ],
+      colors: {
+        'editor.background': '#050505',
+        'editor.foreground': '#d4d4d4',
+        'editorCursor.foreground': '#569cd6',
+        'editor.lineHighlightBackground': '#111111',
+        'editorLineNumber.foreground': '#333333',
+        'editorLineNumber.activeForeground': '#666666',
+        'editor.selectionBackground': '#264f78',
+        'editor.inactiveSelectionBackground': '#3a3d41',
+        'editorIndentGuide.background': '#1a1a1a',
+        'editorIndentGuide.activeBackground': '#333333',
+      }
+    });
+  };
+
+  useEffect(() => {
+    if (monaco && language === 'sql') {
+      const completionProvider = monaco.languages.registerCompletionItemProvider('sql', {
+        triggerCharacters: ['.', ' '],
+        provideCompletionItems: (model: any, position: any) => {
+          const word = model.getWordUntilPosition(position);
+          const range = {
+            startLineNumber: position.lineNumber,
+            endLineNumber: position.lineNumber,
+            startColumn: word.startColumn,
+            endColumn: word.endColumn,
+          };
+
+          const line = model.getLineContent(position.lineNumber);
+          const lastChar = line[position.column - 2];
+          
+          let suggestions: any[] = [];
+
+          if (lastChar === '.') {
+            const matches = line.substring(0, position.column - 1).match(/(\w+)\.$/);
+            if (matches) {
+              const tableName = matches[1];
+              const table = parsedSchema.find((t: any) => t.name === tableName);
+              if (table) {
+                suggestions = table.columns.map((col: any) => ({
+                  label: col.name,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: col.name,
+                  range: range,
+                  detail: `${col.type}${col.isPrimary ? ' (PK)' : ''}`,
+                  documentation: `Column of ${tableName}`
+                }));
+              }
+            }
+          } else {
+            suggestions.push(...SQL_KEYWORDS.map(kw => ({
+              label: kw,
+              kind: monaco.languages.CompletionItemKind.Keyword,
+              insertText: kw,
+              range: range,
+              detail: 'SQL Keyword'
+            })));
+
+            suggestions.push(...SQL_FUNCTIONS.map(f => ({
+              label: f,
+              kind: monaco.languages.CompletionItemKind.Function,
+              insertText: f + '($1)',
+              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+              range: range,
+              detail: 'SQL Function'
+            })));
+
+            suggestions.push(...parsedSchema.map((table: any) => ({
+              label: table.name,
+              kind: monaco.languages.CompletionItemKind.Class,
+              insertText: table.name,
+              range: range,
+              detail: `Table (${table.rowCount || 0} rows)`,
+              documentation: table.columns.map((c: any) => c.name).join(', ')
+            })));
+
+            const allColumns = new Set<string>();
+            parsedSchema.forEach((t: any) => t.columns.forEach((c: any) => allColumns.add(c.name)));
+            suggestions.push(...Array.from(allColumns).map(colName => ({
+              label: colName,
+              kind: monaco.languages.CompletionItemKind.Field,
+              insertText: colName,
+              range: range,
+              detail: 'Column'
+            })));
+
+            suggestions.push(...SQL_SNIPPETS.map(s => ({
+              label: s.label,
+              kind: monaco.languages.CompletionItemKind.Snippet,
+              insertText: s.value,
+              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+              range: range,
+              detail: 'SQL Snippet'
+            })));
+          }
+
+          return { suggestions };
+        },
+      });
+
+      return () => completionProvider.dispose();
+    }
+  }, [monaco, language, parsedSchema]);
+
+  const handleEditorChange = (val: string | undefined) => {
+    onChange(val || '');
+  };
+
+  const handleExecute = () => {
+    const { query, range } = getEffectiveQuery();
+    flashHighlight(range);
+    const event = new CustomEvent('execute-query', { detail: { query } });
+    window.dispatchEvent(event);
+  };
+
+
+  return (
+    <div className="h-full w-full flex flex-col bg-[#050505] relative overflow-hidden group">
+      {/* Dynamic Pro Toolbar - Hidden on mobile */}
+      <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-[#0a0a0a] border-b border-white/5 overflow-x-auto no-scrollbar scroll-smooth">
+        <div className="flex items-center gap-1 mr-2 px-1.5 py-1 rounded bg-white/5 border border-white/5">
+          <span className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">Quick Actions</span>
+        </div>
+        
+        {hasSelection && (
+          <button
+            onClick={handleExecute}
+            className="px-2.5 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold transition-all border border-blue-400/30 active:scale-95 flex items-center gap-1.5 shadow-[0_0_15px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
+          >
+            <Play className="w-3 h-3 fill-current" />
+            RUN SELECTION
+          </button>
+        )}
+
+        <button
+          onClick={handleFormat}
+          title="Format SQL (Shift+Alt+F)"
+          className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-[10px] font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
+        >
+          <AlignLeft className="w-3 h-3" />
+          FORMAT
+        </button>
+
+        <button
+          onClick={handleCopy}
+          className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-[10px] font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
+        >
+          <Copy className="w-3 h-3" />
+          {hasSelection ? 'COPY SELECTION' : 'COPY'}
+        </button>
+
+        <button
+          onClick={handleClear}
+          className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-red-400 text-[10px] font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
+        >
+          <Trash2 className="w-3 h-3" />
+          CLEAR
+        </button>
+
+        <div className="w-px h-4 bg-white/5 mx-1" />
+
+        <button
+          onClick={() => setShowAi(!showAi)}
+          className={cn(
+            "px-2.5 py-1.5 rounded text-[10px] font-bold transition-all border active:scale-95 flex items-center gap-1.5",
+            showAi 
+              ? "bg-blue-600 border-blue-500 text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]" 
+              : "bg-zinc-900 border-white/5 text-zinc-400 hover:text-blue-400 hover:border-blue-500/30"
+          )}
+        >
+          <Sparkles className={cn("w-3.5 h-3.5", showAi && "animate-pulse")} />
+          AI ASSISTANT
+        </button>
+        
+        <div className="flex-1" />
+        
+          <div className="flex items-center gap-1.5 opacity-50 hover:opacity-100 transition-opacity">
+            {language === 'sql' && onExplain && (
+              <button
+                onClick={onExplain}
+                className="px-2.5 py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 text-amber-500 hover:text-amber-400 text-[10px] font-bold transition-all border border-amber-500/10 active:scale-95 flex items-center gap-1.5 mr-2"
+              >
+                <Zap className="w-3 h-3" />
+                EXPLAIN
+              </button>
+            )}
+            <kbd className="px-2 py-1 rounded bg-zinc-900 border border-white/5 text-[9px] text-zinc-500 font-mono">
+              ⌘ + ENTER TO RUN
+            </kbd>
+          </div>
+        </div>
+
+      {/* Floating AI Input */}
+      <AnimatePresence>
+        {showAi && (
+            <motion.div
+              initial={{ opacity: 0, y: -10, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.95 }}
+              className="absolute top-12 left-1/2 -translate-x-1/2 w-full max-w-2xl z-50 px-4"
+            >
+              <form 
+                onSubmit={handleAiSubmit}
+                className="bg-[#0f0f0f]/95 backdrop-blur-xl border border-blue-500/40 rounded-2xl shadow-[0_0_50px_rgba(37,99,235,0.25)] overflow-hidden flex flex-col p-1.5"
+              >
+                <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5 mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1 rounded-md bg-blue-500/10">
+                      <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                    </div>
+                    <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em]">Expert DBA Mode</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] text-zinc-500 font-medium">Context: {tables.length} tables active</span>
+                    <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                  </div>
+                  </div>
+  
+                  <AnimatePresence>
+                    {aiError && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="px-3 pb-2"
+                      >
+                        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2.5 flex items-start gap-2.5">
+                          <div className="p-1 rounded bg-red-500/20 mt-0.5">
+                            <X className="w-3 h-3 text-red-400" />
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-[11px] font-bold text-red-400 uppercase tracking-tight mb-0.5">AI Error</p>
+                            <p className="text-[12px] text-red-300/90 leading-relaxed">{aiError}</p>
+                          </div>
+                          <button 
+                            type="button"
+                            onClick={() => setAiError(null)}
+                            className="text-red-400/50 hover:text-red-400 transition-colors"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+  
+                  <div className="flex items-center gap-2 px-3 pb-1.5">
+
+                  <input
+                    autoFocus
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    placeholder="Describe the data you need in plain English... (e.g. 'Show me the revenue growth per month')"
+                    className="bg-transparent border-none outline-none text-[13px] text-zinc-100 w-full h-12 placeholder:text-zinc-600 font-medium"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowAi(false)}
+                      className="p-2.5 rounded-xl hover:bg-white/5 text-zinc-500 transition-colors"
+                    >
+                      <X className="w-4.5 h-4.5" />
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isAiLoading || !aiPrompt.trim()}
+                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 px-5 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-lg shadow-blue-600/30 flex items-center gap-2"
+                    >
+                      {isAiLoading ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Thinking...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Generate</span>
+                          <Send className="w-3.5 h-3.5" />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex-1 relative">
+        <Editor
+          height="100%"
+          language={language}
+          theme="db-dark"
+          value={value}
+          beforeMount={handleBeforeMount}
+          onChange={handleEditorChange}
+          loading={<div className="h-full w-full bg-[#050505] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-zinc-800" /></div>}
+          onMount={(editor, monaco) => {
+            editorRef.current = editor;
+            
+            editor.onDidChangeCursorSelection(() => {
+              const selection = editor.getSelection();
+              setHasSelection(!selection.isEmpty());
+            });
+
+            // Add custom keyboard shortcut
+            editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+              handleExecute();
+            });
+
+            // Add format shortcut
+            editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => {
+              handleFormat();
+            });
+
+            // Context Menu Actions
+            editor.addAction({
+              id: 'run-query',
+              label: 'Run Query',
+              keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+              contextMenuGroupId: 'navigation',
+              contextMenuOrder: 1,
+              run: () => handleExecute()
+            });
+
+            if (onExplain) {
+              editor.addAction({
+                id: 'explain-query',
+                label: 'Explain Plan',
+                contextMenuGroupId: 'navigation',
+                contextMenuOrder: 2,
+                run: () => onExplain()
+              });
+            }
+
+            editor.addAction({
+              id: 'format-sql',
+              label: 'Format SQL',
+              keybindings: [monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
+              contextMenuGroupId: 'modification',
+              contextMenuOrder: 1,
+              run: () => handleFormat()
+            });
+          }}
+          options={{
+            minimap: { enabled: false },
+            fontSize: 13,
+            fontFamily: '"JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace',
+            lineNumbers: 'on',
+            roundedSelection: true,
+            scrollBeyondLastLine: false,
+            readOnly: false,
+            automaticLayout: true,
+            padding: { top: 12 },
+            cursorSmoothCaretAnimation: 'on',
+            cursorBlinking: 'smooth',
+            smoothScrolling: true,
+            contextmenu: true,
+            renderLineHighlight: 'all',
+            bracketPairColorization: { enabled: true },
+            guides: { indentation: true },
+            scrollbar: {
+              vertical: 'visible',
+              horizontal: 'visible',
+              verticalScrollbarSize: 8,
+              horizontalScrollbarSize: 8,
+            },
+            fontLigatures: true,
+            suggestOnTriggerCharacters: true,
+            quickSuggestions: {
+              other: true,
+              comments: false,
+              strings: true
+            },
+            parameterHints: {
+              enabled: true
+            }
+          }}
+        />
+        
+        {/* Connection Type Badge */}
+        <div className="absolute top-3 right-6 pointer-events-none select-none z-10">
+          <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-zinc-900/90 border border-white/10 backdrop-blur-md shadow-2xl">
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+              {language} Engine
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+QueryEditor.displayName = 'QueryEditor';

@@ -1,0 +1,39 @@
+# Render Blueprint - Infrastructure as Code
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: libredb-studio
+    runtime: docker
+    # Use Dockerfile for building
+    dockerfilePath: ./Dockerfile
+    # Health check endpoint
+    healthCheckPath: /api/db/health
+    # Auto-deploy on push to main
+    autoDeploy: true
+    # Environment variables (set in Render Dashboard for secrets)
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      # Authentication - Set these in Render Dashboard
+      - key: ADMIN_PASSWORD
+        sync: false # Must be set manually in dashboard
+      - key: USER_PASSWORD
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      # AI Configuration (Optional) - Set in Dashboard
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: gemini-2.0-flash
+    # Disk for persistent storage (optional)
+    # disk:
+    #   name: libredb-data
+    #   mountPath: /app/data
+    #   sizeGB: 1
+
