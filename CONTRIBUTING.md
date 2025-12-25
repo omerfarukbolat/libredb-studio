@@ -75,6 +75,27 @@ LLM_API_KEY=your_api_key
 LLM_MODEL=gemini-2.5-flash
 ```
 
+### Development Database
+
+We provide a ready-to-use PostgreSQL setup with sample data for testing:
+
+```bash
+# Start PostgreSQL with sample e-commerce data
+docker compose -f docker/postgres.yml up -d
+
+# Connect with:
+# Host: localhost, Port: 5432, Database: libredb_dev
+# User: postgres, Password: postgres
+```
+
+**Includes:**
+- PostgreSQL 17 with `pg_stat_statements` enabled
+- E-commerce sample schema (customers, products, orders)
+- 100+ records across multiple tables
+- Pre-built views for reporting
+
+> This is especially useful for testing the **Monitoring Dashboard** features.
+
 ### Project Structure
 
 ```

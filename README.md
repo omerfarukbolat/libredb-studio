@@ -131,6 +131,55 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 
 ---
 
+## 🗄️ Development Database
+
+Need a database to test with? We provide a ready-to-use PostgreSQL setup with sample data:
+
+```bash
+# Start PostgreSQL with sample e-commerce data
+docker compose -f docker/postgres.yml up -d
+
+# Stop (keeps data)
+docker compose -f docker/postgres.yml down
+
+# Stop and remove all data
+docker compose -f docker/postgres.yml down -v
+```
+
+### What's Included
+
+| Feature | Description |
+|---------|-------------|
+| **PostgreSQL 17** | Latest Alpine image |
+| **pg_stat_statements** | Pre-enabled for query monitoring |
+| **Sample Schema** | E-commerce database (app schema) |
+| **Sample Data** | 25 customers, 30 products, 100 orders |
+| **Views** | Order summary, product sales, customer LTV |
+
+### Connection Details
+
+```
+Host: localhost
+Port: 5432
+Database: libredb_dev (or postgres)
+User: postgres
+Password: postgres
+```
+
+### Sample Tables
+
+- `app.customers` - Customer profiles with loyalty tiers
+- `app.products` - Product catalog with pricing
+- `app.orders` / `app.order_items` - Order history
+- `app.product_reviews` - Customer reviews
+- `app.categories` - Product categories (hierarchical)
+- `app.coupons` - Discount codes
+- `app.audit_log` - Change tracking
+
+> 💡 This setup is ideal for testing the **Monitoring Dashboard** features with real `pg_stat_statements` data.
+
+---
+
 ## ⚡ One-Click Deploy
 
 Deploy your own instance of LibreDB Studio with a single click:

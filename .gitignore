@@ -80,3 +80,7 @@ Thumbs.db
 *.tmp
 *.temp
 .cache
+
+
+.claude/
+.orchids/
