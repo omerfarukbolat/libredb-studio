@@ -148,7 +148,7 @@ Deploy your own instance of LibreDB Studio with a single click:
 | `LLM_API_KEY` | ❌ | API key for AI features |
 | `LLM_MODEL` | ❌ | Model name (e.g., `gemini-2.0-flash`) |
 
-> 💡 **Tip**: Copy `env.example` to `.env.local` for local development.
+> 💡 **Tip**: Copy `.env.example` to `.env.local` for local development.
 
 ---
 

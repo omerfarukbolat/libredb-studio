@@ -95,7 +95,7 @@ cd libredb-studio
 bun install
 
 # Configure environment
-cp env.example .env.local
+cp .env.example .env.local
 # Edit .env.local with your settings
 
 # Start development server
