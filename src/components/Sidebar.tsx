@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { DatabaseConnection, TableSchema } from '@/lib/types';
-import { Plus, Database, HardDrive, Cpu, Cloud, Trash2, Zap, Layers } from 'lucide-react';
+import { Plus, Database, HardDrive, Cpu, Cloud, Trash2, Zap, Layers, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
@@ -55,7 +55,8 @@ export function ConnectionsList({
                 "group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 text-sm relative overflow-hidden",
                 activeConnection?.id === conn.id
                   ? "bg-blue-600/10 text-blue-400"
-                  : "hover:bg-accent/50 text-muted-foreground hover:text-foreground"
+                  : "hover:bg-accent/50 text-muted-foreground hover:text-foreground",
+                conn.isDemo && "border border-emerald-500/20"
               )}
               onClick={() => onSelectConnection(conn)}
             >
@@ -67,27 +68,43 @@ export function ConnectionsList({
               )}
               <div className={cn(
                 "p-1 rounded transition-colors",
-                activeConnection?.id === conn.id ? "bg-blue-500/20" : "bg-muted group-hover:bg-accent"
+                activeConnection?.id === conn.id ? "bg-blue-500/20" : "bg-muted group-hover:bg-accent",
+                conn.isDemo && "bg-emerald-500/20"
               )}>
-                {conn.type === 'postgres' && <Cloud className="w-3 h-3" />}
-                {conn.type === 'mysql' && <HardDrive className="w-3 h-3" />}
-                {conn.type === 'mongodb' && <Layers className="w-3 h-3" />}
-                {conn.type === 'redis' && <Cpu className="w-3 h-3" />}
-                {conn.type === 'sqlite' && <Database className="w-3 h-3" />}
-                {conn.type === 'demo' && <Zap className="w-3 h-3 text-yellow-500" />}
+                {conn.isDemo ? (
+                  <Sparkles className="w-3 h-3 text-emerald-400" />
+                ) : (
+                  <>
+                    {conn.type === 'postgres' && <Cloud className="w-3 h-3" />}
+                    {conn.type === 'mysql' && <HardDrive className="w-3 h-3" />}
+                    {conn.type === 'mongodb' && <Layers className="w-3 h-3" />}
+                    {conn.type === 'redis' && <Cpu className="w-3 h-3" />}
+                    {conn.type === 'sqlite' && <Database className="w-3 h-3" />}
+                    {conn.type === 'demo' && <Zap className="w-3 h-3 text-yellow-500" />}
+                  </>
+                )}
               </div>
-              <span className="truncate flex-1 font-medium text-[13px]">{conn.name}</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="w-6 h-6 opacity-50 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteConnection(conn.id);
-                }}
-              >
-                <Trash2 className="w-3 h-3" />
-              </Button>
+              <div className="flex-1 min-w-0">
+                <span className="truncate block font-medium text-[13px]">{conn.name}</span>
+                {conn.isDemo && (
+                  <span className="text-[9px] uppercase tracking-wider text-emerald-400/80 font-semibold">
+                    Demo Database
+                  </span>
+                )}
+              </div>
+              {!conn.isDemo && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="w-6 h-6 opacity-50 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteConnection(conn.id);
+                  }}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </Button>
+              )}
             </motion.div>
           ))
         )}

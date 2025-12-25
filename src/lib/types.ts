@@ -11,6 +11,7 @@ export interface DatabaseConnection {
   database?: string;
   connectionString?: string;
   createdAt: Date;
+  isDemo?: boolean;
 }
 
 export interface TableSchema {

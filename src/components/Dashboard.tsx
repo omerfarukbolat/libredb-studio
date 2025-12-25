@@ -228,6 +228,12 @@ export default function Dashboard() {
     } : t));
     setBottomPanelMode(isExplain ? 'explain' : 'results');
     
+    if (activeConnection.isDemo && process.env.NODE_ENV === 'development') {
+      console.log('[DemoDB] Executing query on demo connection:', {
+        queryPreview: queryToExecute.substring(0, 100) + (queryToExecute.length > 100 ? '...' : ''),
+      });
+    }
+
     const startTime = Date.now();
     try {
       const response = await fetch('/api/db/query', {
@@ -241,6 +247,12 @@ export default function Dashboard() {
 
       if (!response.ok) {
         const error = await response.json();
+        const errorMessage = error.error || 'Query failed';
+
+        if (activeConnection.isDemo) {
+          console.error('[DemoDB] Query failed:', { errorMessage, executionTime });
+        }
+
         storage.addToHistory({
           id: Math.random().toString(36).substring(7),
           connectionId: activeConnection.id,
@@ -250,13 +262,25 @@ export default function Dashboard() {
           executionTime,
           status: 'error',
           executedAt: new Date(),
-          errorMessage: error.error
+          errorMessage
         });
-        throw new Error(error.error || 'Query failed');
+
+        // Provide more context for demo connection errors
+        if (activeConnection.isDemo) {
+          throw new Error(`Demo database error: ${errorMessage}. The demo database may be temporarily unavailable.`);
+        }
+        throw new Error(errorMessage);
       }
 
       const resultData = await response.json();
-      
+
+      if (activeConnection.isDemo && process.env.NODE_ENV === 'development') {
+        console.log('[DemoDB] Query executed successfully:', {
+          rowCount: resultData.rowCount,
+          executionTime: resultData.executionTime || executionTime,
+        });
+      }
+
       storage.addToHistory({
         id: Math.random().toString(36).substring(7),
         connectionId: activeConnection.id,
@@ -281,7 +305,8 @@ export default function Dashboard() {
       }
     } catch (error: any) {
       setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, isExecuting: false } : t));
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      const title = activeConnection?.isDemo ? "Demo Database Error" : "Query Error";
+      toast({ title, description: error.message, variant: "destructive" });
     }
   };
 
@@ -292,9 +317,79 @@ export default function Dashboard() {
   }, [activeTabId, activeConnection, executeQuery]);
 
   useEffect(() => {
-    const loadedConnections = storage.getConnections();
-    setConnections(loadedConnections);
-    if (loadedConnections.length > 0) setActiveConnection(loadedConnections[0]);
+    const initializeConnections = async () => {
+      const LOG_PREFIX = '[DemoDB]';
+      const loadedConnections = storage.getConnections();
+
+      // Fetch demo connection from server
+      try {
+        console.log(`${LOG_PREFIX} Checking for demo connection...`);
+        const res = await fetch('/api/demo-connection');
+
+        if (res.ok) {
+          const data = await res.json();
+
+          if (data.enabled && data.connection) {
+            const demoConn = {
+              ...data.connection,
+              createdAt: new Date(data.connection.createdAt),
+            };
+
+            // Check if demo connection already exists (by id or isDemo flag)
+            const existingDemo = loadedConnections.find(
+              c => c.id === demoConn.id || (c.isDemo && c.type === 'postgres')
+            );
+
+            if (existingDemo) {
+              // Update existing demo connection (credentials may have changed)
+              console.log(`${LOG_PREFIX} Updating existing demo connection:`, {
+                id: existingDemo.id,
+                name: demoConn.name,
+              });
+              const updatedDemo = { ...demoConn, id: existingDemo.id };
+              storage.saveConnection(updatedDemo);
+              const updatedConnections = storage.getConnections();
+              setConnections(updatedConnections);
+
+              // If demo was active, update reference
+              if (loadedConnections.length > 0) {
+                setActiveConnection(updatedConnections[0]);
+              }
+            } else {
+              // Add new demo connection
+              console.log(`${LOG_PREFIX} Adding new demo connection:`, {
+                id: demoConn.id,
+                name: demoConn.name,
+                database: demoConn.database,
+              });
+              storage.saveConnection(demoConn);
+              const updatedConnections = storage.getConnections();
+              setConnections(updatedConnections);
+
+              // Set demo as active if no other connections
+              if (loadedConnections.length === 0) {
+                console.log(`${LOG_PREFIX} Auto-selecting demo as active connection (no other connections)`);
+                setActiveConnection(demoConn);
+              } else {
+                setActiveConnection(updatedConnections[0]);
+              }
+            }
+            return;
+          } else {
+            console.log(`${LOG_PREFIX} Demo connection not enabled or not configured`);
+          }
+        } else {
+          console.warn(`${LOG_PREFIX} API returned non-ok status:`, res.status);
+        }
+      } catch (error) {
+        console.error(`${LOG_PREFIX} Failed to fetch demo connection:`, error);
+      }
+
+      setConnections(loadedConnections);
+      if (loadedConnections.length > 0) setActiveConnection(loadedConnections[0]);
+    };
+
+    initializeConnections();
   }, []);
 
   useEffect(() => {
@@ -312,17 +407,42 @@ export default function Dashboard() {
 
   const fetchSchema = async (conn: DatabaseConnection) => {
     setIsLoadingSchema(true);
+
+    if (conn.isDemo) {
+      console.log('[DemoDB] Fetching schema for demo connection:', conn.name);
+    }
+
     try {
       const response = await fetch('/api/db/schema', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(conn),
       });
-      if (!response.ok) throw new Error('Failed to fetch schema');
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error || 'Failed to fetch schema';
+
+        if (conn.isDemo) {
+          console.error('[DemoDB] Schema fetch failed:', errorMessage);
+          throw new Error(`Demo database unavailable: ${errorMessage}. You can add your own database connection.`);
+        }
+        throw new Error(errorMessage);
+      }
+
       const data = await response.json();
+
+      if (conn.isDemo) {
+        console.log('[DemoDB] Schema loaded successfully:', {
+          tables: data.length,
+          tableNames: data.slice(0, 5).map((t: any) => t.name),
+        });
+      }
+
       setSchema(data);
     } catch (error: any) {
-      toast({ title: "Schema Error", description: error.message, variant: "destructive" });
+      const title = conn.isDemo ? "Demo Database Error" : "Schema Error";
+      toast({ title, description: error.message, variant: "destructive" });
     } finally {
       setIsLoadingSchema(false);
     }
