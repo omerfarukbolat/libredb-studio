@@ -482,7 +482,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
       const activeSessions: ActiveSession[] = (currentOps.inprog || [])
         .slice(0, 10)
-        .map((op: any) => ({
+        .map((op: Record<string, unknown>) => ({
           pid: op.opid || 'N/A',
           user: op.client || 'N/A',
           database: op.ns || this.getDatabaseName(),

@@ -1,16 +1,16 @@
 "use client";
 
 import React from 'react';
-import { Database, Layout, Terminal, Table as TableIcon } from 'lucide-react';
+import { Database, Terminal, Table as TableIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface MobileNavProps {
   activeTab: 'database' | 'schema' | 'editor';
   onTabChange: (tab: 'database' | 'schema' | 'editor') => void;
-  hasResult: boolean;
+  hasResult?: boolean;
 }
 
-export function MobileNav({ activeTab, onTabChange, hasResult }: MobileNavProps) {
+export function MobileNav({ activeTab, onTabChange }: MobileNavProps) {
   const tabs = [
     { id: 'database', label: 'DB', icon: Database },
     { id: 'schema', label: 'Schema', icon: TableIcon },
