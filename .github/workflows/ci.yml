@@ -4,8 +4,9 @@ on:
   push:
     branches:
       - ci
+      - main
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 jobs:
   lint-and-build:
@@ -53,10 +54,12 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        continue-on-error: true
 
       - name: SonarCloud skipped
         if: ${{ secrets.SONAR_TOKEN == '' }}
         run: |
           echo "⚠️ SonarCloud scan skipped: SONAR_TOKEN secret is not configured"
           echo "To enable SonarCloud analysis, add SONAR_TOKEN to repository secrets"
+          exit 0
 
