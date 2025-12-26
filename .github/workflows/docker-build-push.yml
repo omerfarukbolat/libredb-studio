@@ -31,19 +31,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: '20'
+          bun-version: latest
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Run ESLint
-        run: npm run lint
+        run: bun run lint
 
       - name: Run TypeScript type check
-        run: npm run typecheck
+        run: bun run typecheck
 
       - name: Extract version from package.json or branch name
         id: extract-version
@@ -52,7 +52,7 @@ jobs:
             VERSION="${{ github.event.inputs.version }}"
           elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
             # Get version from package.json for main branch
-            VERSION=$(node -p "require('./package.json').version")
+            VERSION=$(bun -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8')); console.log(pkg.version)")
             echo "Using package.json version: ${VERSION}"
           else
             # Extract version from release branch name
